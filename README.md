@@ -1,3 +1,3 @@
 # Elenchus Agent
-An AI math coach that uses Socratic questioning (Elenchus) to guide you through complex problems.
+A conversational AI agent that acts as an mathematics tutor, trying to guide a user through maths puzzles through problem-solving heuristics and Socratic questioning.
 
