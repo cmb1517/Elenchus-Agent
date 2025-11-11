@@ -3,9 +3,12 @@ import re
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
-from prompts import MASTER_PROMPT
+from prompts import MASTER_PROMPT, SOLVER_PROMPT
+
+SHOW_RAW_OUTPUT = True
 
 store = {}
 
@@ -31,27 +34,39 @@ def main():
     if os.getenv("OPENAI_API_KEY") is None:
         raise ValueError("OPENAI_API_KEY environment variable not set.")
     
-    llm = ChatOpenAI(model="gpt-4", temperature=0)
-
-    prompt_template = ChatPromptTemplate.from_messages([
+    solver_llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
+    solver_prompt = ChatPromptTemplate.from_messages([("human", SOLVER_PROMPT), ("human", "{user_input}")])
+    solver_chain = solver_prompt | solver_llm
+    
+    coach_llm = ChatOpenAI(model="gpt-4", temperature=0)
+    coach_prompt_template = ChatPromptTemplate.from_messages([
         ("system", MASTER_PROMPT),
         MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{user_input}")
+        ("human", "Here is my message: {user_input}\n\nHere is the expert solution for your reference: {solution}")
     ])
 
     # send the user input -> prompt, then send to LLM
-    chain = prompt_template | llm
+    coach_base_chain = coach_prompt_template | coach_llm
+
+    # user_input -> solver_chain -> solution
+    # then user_input + solution -> coach_base_chain
+    orchestrator_chain = RunnablePassthrough().assign(
+        solution=lambda inputs: solver_chain.invoke({"user_input": inputs["user_input"]})
+        | coach_base_chain
+    )
 
     chain_with_memory = RunnableWithMessageHistory(
-        chain,
+        orchestrator_chain,
         get_session_history, # f(session_id)->history
         input_messages_key="user_input",
         history_messages_key="chat_history",
+        # Note: We only add the *user_input* and *coach's response* to history.
+        # The "solution" is re-generated every time, which is fine for now.
     )
 
-    print("Elenchus Agent is online. Type 'exit' to quit.")
+    print("Elenchus Agent v2.0 (Multi-Agent) is online. (Type 'exit' to quit).")
 
-    session_id = "enlechus_session"
+    session_id = "enlechus_user_v2"
     while True:
         try:
             user_input = input("\nYou: ")
@@ -60,16 +75,18 @@ def main():
                 print("Exiting Elenchus Agent. Goodbye!")
                 break
 
-            print("\nTutor: (Thinking...)")
+            print("\nTutor: (Consulting expert...)")
             config = {"configurable": {"session_id": session_id}}
             # .invoke() runs the chain once + get full response
             raw_response = chain_with_memory.invoke({"user_input": user_input}, config=config)
 
             raw_content = raw_response.content
+            if SHOW_RAW_OUTPUT:
+                final_response = raw_content
+            else:
+                final_response = parse_response(raw_content)
 
-            clean_response = parse_response(raw_content)
-
-            print(f"\rTutor: {clean_response}\n")
+            print(f"\rTutor: {final_response}\n")
 
         except EOFError:
             break
