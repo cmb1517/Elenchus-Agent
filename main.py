@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.output_parsers import StrOutputParser
 from langchain_community.chat_message_histories import ChatMessageHistory
 from prompts import MASTER_PROMPT, SOLVER_PROMPT
 
@@ -36,7 +37,7 @@ def main():
     
     solver_llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
     solver_prompt = ChatPromptTemplate.from_messages([("human", SOLVER_PROMPT), ("human", "{user_input}")])
-    solver_chain = solver_prompt | solver_llm
+    solver_chain = solver_prompt | solver_llm | StrOutputParser()
     
     coach_llm = ChatOpenAI(model="gpt-4", temperature=0)
     coach_prompt_template = ChatPromptTemplate.from_messages([
@@ -51,9 +52,8 @@ def main():
     # user_input -> solver_chain -> solution
     # then user_input + solution -> coach_base_chain
     orchestrator_chain = RunnablePassthrough().assign(
-        solution=lambda inputs: solver_chain.invoke({"user_input": inputs["user_input"]})
-        | coach_base_chain
-    )
+        solution=solver_chain
+    ) | coach_base_chain
 
     chain_with_memory = RunnableWithMessageHistory(
         orchestrator_chain,
